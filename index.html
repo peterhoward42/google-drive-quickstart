@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Drive API Quickstart</title>
+  <meta charset="utf-8" />
+</head>
+
+<body>
+  <p>Drive API Quickstart</p>
+
+  <!--Add buttons to initiate auth sequence and sign out-->
+  <button id="authorize_button" onclick="handleAuthClick()">Authorize</button>
+  <button id="signout_button" onclick="handleSignoutClick()">Sign Out</button>
+
+  <pre id="content" style="white-space: pre-wrap;"></pre>
+
+  <script type="text/javascript">
+    /* exported gapiLoaded */
+    /* exported gisLoaded */
+    /* exported handleAuthClick */
+    /* exported handleSignoutClick */
+
+    // TODO(developer): Set to client ID and API key from the Developer Console
+    const CLIENT_ID = '1010145159733-b20482qqpa6cd72lhl537keh7vupvtjv.apps.googleusercontent.com';
+    const API_KEY = 'AIzaSyAbX96IOKGwr6L25zcTGcphqtnCejbp1Jg';
+
+    // Discovery doc URL for APIs used by the quickstart
+    const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
+
+    // Authorization scopes required by the API; multiple scopes can be
+    // included, separated by spaces.
+    const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly';
+
+    let tokenClient;
+    let gapiInited = false;
+    let gisInited = false;
+
+    document.getElementById('authorize_button').style.visibility = 'hidden';
+    document.getElementById('signout_button').style.visibility = 'hidden';
+
+    // The generic API has loaded, so now it delegates to auto-generate the app-specific gAPI client.
+    function gapiLoaded() {
+      gapi.load('client', initializeGapiClient);
+    }
+
+    // Helper function to build the app-specific gAPI client.
+    // It consumes this app's apiKey, and a static Google 'discovery' document.
+    // It might the last bit of initialisation to complete - hence the call to maybeEnableButtons().
+    async function initializeGapiClient() {
+      await gapi.client.init({
+        apiKey: API_KEY,
+        discoveryDocs: [DISCOVERY_DOC],
+      });
+      gapiInited = true;
+      maybeEnableButtons();
+    }
+
+    // The Identity API has loaded, so it constructs an OAuth2 client. (tokenClient).
+    // It consumes this App's clientID, and the HARD-CODED scopes.
+    // TODO - presumably then the hard coded scopes here, must match those in the
+    // GCP project config?
+    // It might the last bit of initialisation to complete - hence the call to maybeEnableButtons().
+
+    function gisLoaded() {
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: '', // defined later
+      });
+      gisInited = true;
+      maybeEnableButtons();
+    }
+
+    // Show the [Authorize], call to action button, only once both the
+    // clients are ready.
+    function maybeEnableButtons() {
+      if (gapiInited && gisInited) {
+        document.getElementById('authorize_button').style.visibility = 'visible';
+      }
+    }
+
+    // The web visitor clicked the [authorise] button.
+    // 
+    // It first loads a token request response handler which I'll come back to.
+    //
+    // Then it asks the gAPI client for a token providing access to Drive and
+    // branches according to one already being in play for this session or not.
+    //
+    // In both cases it triggers the tokenClient (not the gAPI client) to deliver the token
+    // (to the callback mentioned earlier)
+    // 
+    // But when a new session is required it passes an argument to mandate authenticate and ask the
+    // user's consent.
+    //
+    // For an existing session, it still pokes the tokenClient to deliver a token to the callback,
+    // but without UI intervention.
+    //
+    // So what does the token-receiving callback do?
+    //
+    // It rethrows exceptions. (noting it is async).
+    // It tweaks the UI display to suit when the token arrives nicely.
+    // It passes control to the business logic that asks Drive to list files.
+    function handleAuthClick() {
+
+      tokenClient.callback = async (resp) => {
+        if (resp.error !== undefined) {
+          throw (resp);
+        }
+        document.getElementById('signout_button').style.visibility = 'visible';
+        document.getElementById('authorize_button').innerText = 'Refresh';
+        await listFiles();
+      };
+
+      if (gapi.client.getToken() === null) {
+        // Prompt the user to select a Google Account and ask for consent to share their data
+        // when establishing a new session.
+        tokenClient.requestAccessToken({ prompt: 'consent' });
+      } else {
+        console.log('gapi.client.getToken() returned OK, so calling tokenClient.requestAccessToken with <no argument>')
+        // Skip display of account chooser and consent dialog for an existing session.
+        tokenClient.requestAccessToken({ prompt: '' });
+      }
+    }
+
+    /**
+     *  Sign out the user upon button click.
+     */
+    function handleSignoutClick() {
+      const token = gapi.client.getToken();
+      if (token !== null) {
+        google.accounts.oauth2.revoke(token.access_token);
+        gapi.client.setToken('');
+        document.getElementById('content').innerText = '';
+        document.getElementById('authorize_button').innerText = 'Authorize';
+        document.getElementById('signout_button').style.visibility = 'hidden';
+      }
+    }
+
+    // This just lists the files on the users Google Drive.
+    // But because it communicates with Drive via the gAPI client's Drive functions,
+    // the client will send the token in now has in the request header, thus
+    // providing access control at the Google server end.
+    async function listFiles() {
+      let response;
+      try {
+        response = await gapi.client.drive.files.list({
+          'pageSize': 10,
+          'fields': 'files(id, name)',
+        });
+      } catch (err) {
+        document.getElementById('content').innerText = err.message;
+        return;
+      }
+      const files = response.result.files;
+      if (!files || files.length == 0) {
+        document.getElementById('content').innerText = 'No files found.';
+        return;
+      }
+      // Flatten to string to display
+      const output = files.reduce(
+        (str, file) => `${str}${file.name} (${file.id})\n`,
+        'Files:\n');
+      document.getElementById('content').innerText = output;
+    }
+  </script>
+  <!-- The next two lines load two Google APIs.
+  The first is the generic google API.
+  The second is the Identity Service API.
+  It is an event-driven flow control - note the onload handlers.
+  -->
+  <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+  <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+</body>
+
+</html>
